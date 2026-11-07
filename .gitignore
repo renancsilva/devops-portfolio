@@ -1,0 +1,5 @@
+.env
+*.pem
+*.key
+_diagrams/*.html
+_diagrams/

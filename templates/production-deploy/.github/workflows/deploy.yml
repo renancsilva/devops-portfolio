@@ -1,0 +1,45 @@
+# Deploy on every push to main: SSH into the server, pull, rebuild, smoke test.
+# Repository secrets needed: SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, APP_DIR (e.g. /opt/app), APP_URL
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pull and rebuild
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "
+            set -e
+            cd '${{ secrets.APP_DIR }}'
+            git fetch --quiet origin main
+            git reset --hard origin/main
+            docker compose up -d --build --remove-orphans
+            docker image prune -f
+          "
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "${{ secrets.APP_URL }}") || true
+            echo "attempt $i: HTTP $code"
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then exit 0; fi
+            sleep 10
+          done
+          echo "App did not come back healthy" >&2
+          exit 1
